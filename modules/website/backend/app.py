@@ -22,7 +22,11 @@ from schemas import (
     CustomersListResponse,
     CustomerListItem,
     CustomerDetail,
+    CustomerUpdate,
+    SimpleSuccessResponse,
+    PasswordResetResponse,
 )
+
 from security import verify_password, get_password_hash, create_access_token
 from deps import get_db, get_current_admin_user
 from crud import (
@@ -33,7 +37,11 @@ from crud import (
     mark_registration_token_used,
     list_customers,
     get_customer,
+    update_customer,
+    soft_delete_customer,
+    mark_all_tokens_used_for_customer,
 )
+
 from initial_data import init_db
 
 logger = logging.getLogger("website-backend")
@@ -87,7 +95,7 @@ def public_register(
             detail="Email already registered",
         )
 
-    # Klant + token aanmaken (dit werkte al, gezien je admin-lijst)
+    # Klant + token aanmaken
     customer = create_customer(db, registration=registration, hashed_password=None)
     token = create_registration_token(db, customer)
 
@@ -101,10 +109,9 @@ def public_register(
             url,
         )
     except Exception as e:
-        # Als hier ooit iets misgaat, niet de hele registratie laten falen
+        # Als hier iets misgaat, niet de hele registratie laten falen
         logger.exception("Failed to build password setup URL: %s", e)
 
-    # Heel eenvoudig, plain JSON. Geen Pydantic response_model meer nodig.
     return {
         "status": "ok",
         "message": "Registration received",
@@ -129,7 +136,6 @@ def password_setup_validate(
         or token_obj.used
         or token_obj.expires_at < datetime.now(timezone.utc)
     ):
-        # Frontend verwacht 400 + detail bij ongeldig token
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired token",
@@ -261,16 +267,48 @@ def login(
 def admin_list_customers(
     search: Optional[str] = Query(None),
     customer_type: Optional[CustomerType] = Query(None),
+    include_inactive: bool = Query(False),
+    status_param: Optional[str] = Query(
+        None,
+        alias="status",
+        regex="^(active|inactive|all)$",
+    ),
+    sort_by: str = Query(
+        "created_at",
+        regex="^(created_at|name)$",
+    ),
+    sort_dir: str = Query(
+        "desc",
+        regex="^(asc|desc)$",
+    ),
     db: Session = Depends(get_db),
     _admin=Depends(get_current_admin_user),
 ):
+    """
+    - search: naam/email/bedrijf
+    - customer_type: particulier/bedrijf
+    - include_inactive (legacy): True -> status=all, False -> status=active
+    - status: active/inactive/all (heeft voorrang op include_inactive)
+    - sort_by: created_at|name
+    - sort_dir: asc|desc
+    """
+    # backward compatible mapping van include_inactive -> status
+    if status_param is None:
+        effective_status = "all" if include_inactive else "active"
+    else:
+        effective_status = status_param
+
     items, total = list_customers(
         db,
         search=search,
         customer_type=customer_type,
         skip=0,
         limit=100,
+        status=effective_status,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
     )
+
     return CustomersListResponse(
         items=[CustomerListItem.from_orm(c) for c in items],
         total=total,
@@ -294,3 +332,102 @@ def admin_get_customer(
         )
 
     return CustomerDetail.from_orm(customer)
+
+
+@app.put(
+    "/api/admin/customers/{customer_id}",
+    response_model=CustomerDetail,
+)
+def admin_update_customer(
+    customer_id: uuid.UUID,
+    payload: CustomerUpdate,
+    db: Session = Depends(get_db),
+    _admin=Depends(get_current_admin_user),
+):
+    customer = get_customer(db, customer_id)
+    if not customer or not customer.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Customer not found",
+        )
+
+    # email-uniekheid indien aangepast
+    if payload.email is not None and payload.email.lower() != customer.email.lower():
+        existing = get_customer_by_email(db, payload.email)
+        if existing and existing.id != customer.id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Another customer with this email already exists",
+            )
+
+    # extra business rule: voor bedrijven company_name + tax_id verplicht
+    if payload.customer_type == CustomerType.bedrijf:
+        if not payload.company_name or not payload.tax_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="company_name and tax_id are required for bedrijf customers",
+            )
+
+    updated = update_customer(db, customer, payload)
+    return CustomerDetail.from_orm(updated)
+
+
+@app.delete(
+    "/api/admin/customers/{customer_id}",
+    response_model=SimpleSuccessResponse,
+)
+def admin_soft_delete_customer(
+    customer_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    _admin=Depends(get_current_admin_user),
+):
+    customer = get_customer(db, customer_id)
+    if not customer:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Customer not found",
+        )
+
+    soft_delete_customer(db, customer)
+    return SimpleSuccessResponse(success=True)
+
+
+@app.post(
+    "/api/admin/customers/{customer_id}/reset_password",
+    response_model=PasswordResetResponse,
+)
+def admin_reset_password(
+    customer_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    _admin=Depends(get_current_admin_user),
+):
+    customer = get_customer(db, customer_id)
+    if not customer or not customer.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Customer not found or inactive",
+        )
+
+    # alle oude, ongebruikte tokens ongeldig maken
+    mark_all_tokens_used_for_customer(db, customer.id)
+
+    # nieuwe registration_token maken
+    token = create_registration_token(db, customer)
+
+    # password-setup link loggen (zelfde stijl als bij registratie)
+    try:
+        base_url = settings.WEBSITE_PUBLIC_BASE_URL.rstrip("/")
+        url = f"{base_url}/password-setup?token={token.token}"
+        logger.info(
+            "Password reset email stub for %s: %s",
+            customer.email,
+            url,
+        )
+    except Exception as e:
+        logger.exception("Failed to build password reset URL: %s", e)
+
+    resp = PasswordResetResponse(success=True)
+    if settings.WEBSITE_ENV.lower() in {"local", "dev", "development"}:
+        resp.token = token.token
+
+    return resp

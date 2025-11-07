@@ -111,14 +111,27 @@ services:
       WEBSITE_DB_NAME: casuse_hp_website
       WEBSITE_DB_USER: website_user
       WEBSITE_DB_PASSWORD: website_password
+
       WEBSITE_BACKEND_PORT: 8000
       WEBSITE_JWT_SECRET: "CHANGE_ME_LOCAL_ONLY"
       WEBSITE_JWT_ALGORITHM: "HS256"
-      WEBSITE_REGISTRATION_TOKEN_TTL_MINUTES: "60"
       WEBSITE_ACCESS_TOKEN_EXPIRE_MINUTES: "60"
+      WEBSITE_REGISTRATION_TOKEN_TTL_MINUTES: "60"
+
       WEBSITE_ENV: "local"
+
       WEBSITE_CORS_ORIGINS: "http://localhost:20060,http://localhost:5173,http://localhost:20190,https://www.casuse.mx,https://casuse.mx"
       WEBSITE_PUBLIC_BASE_URL: "http://localhost:20190"
+
+      # ==== NIEUW: e-mail / MailHog settings voor website-backend ====
+      WEBSITE_EMAIL_ENABLED: "true"
+      WEBSITE_SMTP_HOST: "website-mailhog"
+      WEBSITE_SMTP_PORT: "1025"
+      WEBSITE_SMTP_TLS: "false"
+      WEBSITE_SMTP_USERNAME: ""
+      WEBSITE_SMTP_PASSWORD: ""
+      WEBSITE_EMAIL_FROM: "no-reply@casuse.mx"
+
     ports:
       - "20052:8000"
     networks:
@@ -139,6 +152,17 @@ services:
       - "20060:80"
     networks:
       - default
+
+  website-mailhog:
+    image: mailhog/mailhog:v1.0.1
+    container_name: casuse-hp-website-mailhog
+    restart: unless-stopped
+    ports:
+      - "20053:8025"   # Web UI: http://localhost:20053
+    networks:
+      - default
+
+
 
   # =========================
   # MODULE: INVENTARIES

@@ -116,10 +116,14 @@ class CustomerBase(BaseModel):
 
 
 class CustomerCreate(CustomerBase):
-    password: Optional[str] = None  # admin kan eventueel direct wachtwoord zetten
+    # eventueel direct wachtwoord zetten via admin (nu nog niet gebruikt)
+    password: Optional[str] = None
 
 
 class CustomerUpdate(BaseModel):
+    # voor update zijn alle velden optioneel (partial update)
+    email: Optional[EmailStr] = None
+
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     phone_number: Optional[str] = None
@@ -151,6 +155,11 @@ class CustomerListItem(BaseModel):
     is_active: bool
     created_at: datetime
 
+    # extra velden voor lijstweergave
+    company_name: Optional[str] = None
+    address_city: Optional[str] = None
+    address_state: Optional[str] = None
+
     class Config:
         orm_mode = True
 
@@ -162,6 +171,10 @@ class CustomerDetail(CustomerBase):
     created_at: datetime
     updated_at: datetime
 
+    # nieuw:
+    deactivated_at: Optional[datetime] = None
+    hashed_password: Optional[str] = None
+
     class Config:
         orm_mode = True
 
@@ -169,3 +182,13 @@ class CustomerDetail(CustomerBase):
 class CustomersListResponse(BaseModel):
     items: List[CustomerListItem]
     total: int
+
+
+class SimpleSuccessResponse(BaseModel):
+    success: bool
+
+
+class PasswordResetResponse(BaseModel):
+    success: bool
+    # In local/dev mag de backend de token meesturen (debugging in UI)
+    token: Optional[str] = None
