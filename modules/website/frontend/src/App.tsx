@@ -40,6 +40,11 @@ interface CustomerListItem {
   address_postal_code?: string | null
   address_country?: string | null
   is_active: boolean
+
+  // Extra info uit backend over login/portaal
+  has_login: boolean
+  portal_status?: string | null
+  deactivated_at?: string | null
 }
 
 interface CustomersListResponse {
@@ -58,6 +63,36 @@ interface CustomerDetail extends CustomerListItem {
 interface PasswordResetResponse {
   success: boolean
   token?: string
+}
+
+function getCustomerStatusDisplay(c: CustomerListItem) {
+  // 1) Eerst checken of klant gedeactiveerd is
+  if (!c.is_active) {
+    return {
+      label: 'Gedeactiveerd',
+      backgroundColor: '#fee2e2',
+      color: '#991b1b',
+      borderColor: '#fecaca',
+    }
+  }
+
+  // 2) Actief + login → groen
+  if (c.has_login) {
+    return {
+      label: 'Actief – login aangemaakt',
+      backgroundColor: '#dcfce7',
+      color: '#166534',
+      borderColor: '#bbf7d0',
+    }
+  }
+
+  // 3) Actief maar géén login → oranje (in voorbereiding)
+  return {
+    label: 'Actief – géén login',
+    backgroundColor: '#fef3c7',
+    color: '#92400e',
+    borderColor: '#fed7aa',
+  }
 }
 
 interface CustomerEditFormState {
@@ -110,56 +145,57 @@ function setStoredToken(token: string | null) {
   }
 }
 
-async function apiFetch(path: string, init: RequestInit = {}) {
+async function apiFetch(
+  path: string,
+  options: RequestInit = {},
+): Promise<Response> {
   const token = getStoredToken()
-
   const headers: HeadersInit = {
     'Content-Type': 'application/json',
-    ...(init.headers || {}),
+    ...(options.headers || {}),
   }
-
   if (token) {
-    headers['Authorization'] = `Bearer ${token}`
+    headers.Authorization = `Bearer ${token}`
   }
 
   const res = await fetch(`${API_BASE_URL}${path}`, {
-    ...init,
+    ...options,
     headers,
   })
 
-  if (res.status === 401 || res.status === 403) {
+  if (res.status === 401) {
+    setStoredToken(null)
     throw new Error('unauthorized')
-  }
-
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(text || `HTTP ${res.status}`)
   }
 
   return res
 }
 
 const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const navigate = useNavigate()
   const location = useLocation()
-  const token = getStoredToken()
 
   const handleLogout = () => {
     setStoredToken(null)
+    navigate('/login')
+  }
+
+  const handleBackToModules = () => {
     window.location.href = CORE_HOME_URL
   }
 
-  const handleBack = () => {
-    window.location.href = CORE_HOME_URL
-  }
-
-  const isLogin = location.pathname === '/login'
+  const isLoginPage = location.pathname === '/login'
 
   return (
     <div
       style={{
-        fontFamily: 'system-ui, sans-serif',
+        fontFamily:
+          "-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif",
         minHeight: '100vh',
-        backgroundColor: '#f4f4f5',
+        backgroundColor: '#f3f4f6',
+        color: '#111827',
+        display: 'flex',
+        flexDirection: 'column',
       }}
     >
       <header
@@ -178,25 +214,25 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
             style={{
               marginLeft: '0.5rem',
               fontSize: '0.8rem',
-              opacity: 0.7,
+              color: '#9ca3af',
             }}
           >
             module: website
           </span>
         </div>
 
-        {token && !isLogin && (
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
+        {!isLoginPage && (
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
             <button
               type="button"
-              onClick={handleBack}
+              onClick={handleBackToModules}
               style={{
-                padding: '0.35rem 0.8rem',
-                fontSize: '0.85rem',
-                borderRadius: 4,
-                border: '1px solid #6ee7b7',
-                backgroundColor: 'transparent',
-                color: '#6ee7b7',
+                padding: '0.35rem 0.75rem',
+                borderRadius: 9999,
+                border: '1px solid #16a34a',
+                backgroundColor: '#047857',
+                color: '#bbf7d0',
+                fontSize: '0.8rem',
                 cursor: 'pointer',
               }}
             >
@@ -206,12 +242,12 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
               type="button"
               onClick={handleLogout}
               style={{
-                padding: '0.35rem 0.8rem',
-                fontSize: '0.85rem',
-                borderRadius: 4,
+                padding: '0.35rem 0.75rem',
+                borderRadius: 9999,
                 border: '1px solid #f97373',
-                backgroundColor: 'transparent',
-                color: '#fecaca',
+                backgroundColor: '#b91c1c',
+                color: '#fee2e2',
+                fontSize: '0.8rem',
                 cursor: 'pointer',
               }}
             >
@@ -221,48 +257,76 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         )}
       </header>
 
-      <main style={{ padding: '1rem 1.5rem' }}>{children}</main>
+      <main
+        style={{
+          flex: 1,
+          maxWidth: 1100,
+          width: '100%',
+          margin: '0 auto',
+          padding: '1.25rem 1.5rem',
+        }}
+      >
+        {children}
+      </main>
     </div>
   )
 }
 
-const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({
+const ProtectedRoute: React.FC<{ children: React.ReactElement }> = ({
   children,
 }) => {
   const token = getStoredToken()
+  const location = useLocation()
+
   if (!token) {
-    return <Navigate to="/login" replace />
+    return <Navigate to="/login" state={{ from: location }} replace />
   }
-  return <>{children}</>
+
+  return children
 }
 
 const LoginPage: React.FC = () => {
-  const [email, setEmail] = useState('admin@casuse.mx')
-  const [password, setPassword] = useState('Test1234!')
-  const [error, setError] = useState<string | null>(null)
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const navigate = useNavigate()
+  const location = useLocation() as any
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setError(null)
     setLoading(true)
+    setError(null)
+
     try {
       const res = await fetch(`${API_BASE_URL}/api/public/login`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email,
+          password,
+        }),
       })
+
       if (!res.ok) {
-        const text = await res.text()
-        throw new Error(text || 'Login failed')
+        if (res.status === 401) {
+          setError('Ongeldige email of wachtwoord.')
+        } else {
+          setError('Er is een fout opgetreden bij het inloggen.')
+        }
+        return
       }
+
       const data: TokenResponse = await res.json()
       setStoredToken(data.access_token)
-      navigate('/customers')
+
+      const from = location.state?.from?.pathname || '/customers'
+      navigate(from, { replace: true })
     } catch (err) {
       console.error(err)
-      setError('Login mislukt. Controleer email en wachtwoord.')
+      setError('Er is een onverwachte fout opgetreden.')
     } finally {
       setLoading(false)
     }
@@ -271,45 +335,46 @@ const LoginPage: React.FC = () => {
   return (
     <div
       style={{
-        maxWidth: 420,
+        maxWidth: 400,
         margin: '3rem auto',
         backgroundColor: '#fff',
-        padding: '1.5rem 1.75rem',
+        padding: '1.25rem 1.5rem',
         borderRadius: 8,
-        boxShadow: '0 1px 3px rgba(15,23,42,0.1)',
+        boxShadow: '0 1px 3px rgba(15,23,42,0.08)',
       }}
     >
-      <h1 style={{ fontSize: '1.25rem', marginBottom: '1rem' }}>Admin login</h1>
-      <p
+      <h1
         style={{
-          fontSize: '0.85rem',
-          marginBottom: '1rem',
-          color: '#4b5563',
+          fontSize: '1.1rem',
+          fontWeight: 600,
+          marginBottom: '0.75rem',
         }}
       >
-        Log in met je admin-account om klanten te beheren.
-      </p>
+        Inloggen Website Admin
+      </h1>
+
       {error && (
         <div
           style={{
             marginBottom: '0.75rem',
             padding: '0.5rem 0.75rem',
-            fontSize: '0.85rem',
-            backgroundColor: '#fee2e2',
-            color: '#b91c1c',
             borderRadius: 4,
+            backgroundColor: '#fee2e2',
+            color: '#991b1b',
+            fontSize: '0.85rem',
           }}
         >
           {error}
         </div>
       )}
+
       <form onSubmit={handleSubmit}>
         <div style={{ marginBottom: '0.75rem' }}>
           <label
             style={{
               display: 'block',
               fontSize: '0.85rem',
-              marginBottom: 4,
+              marginBottom: '0.25rem',
             }}
           >
             Email
@@ -325,14 +390,16 @@ const LoginPage: React.FC = () => {
               border: '1px solid #d1d5db',
               fontSize: '0.9rem',
             }}
+            required
           />
         </div>
+
         <div style={{ marginBottom: '0.75rem' }}>
           <label
             style={{
               display: 'block',
               fontSize: '0.85rem',
-              marginBottom: 4,
+              marginBottom: '0.25rem',
             }}
           >
             Wachtwoord
@@ -348,23 +415,25 @@ const LoginPage: React.FC = () => {
               border: '1px solid #d1d5db',
               fontSize: '0.9rem',
             }}
+            required
           />
         </div>
+
         <button
           type="submit"
           disabled={loading}
           style={{
             marginTop: '0.5rem',
             width: '100%',
-            padding: '0.5rem 0.75rem',
+            padding: '0.45rem 0.75rem',
             borderRadius: 4,
             border: 'none',
             backgroundColor: '#2563eb',
             color: '#fff',
-            fontSize: '0.9rem',
             fontWeight: 500,
+            fontSize: '0.9rem',
             cursor: loading ? 'default' : 'pointer',
-            opacity: loading ? 0.7 : 1,
+            opacity: loading ? 0.8 : 1,
           }}
         >
           {loading ? 'Bezig...' : 'Inloggen'}
@@ -377,8 +446,12 @@ const LoginPage: React.FC = () => {
 const CustomersListPage: React.FC = () => {
   const [customers, setCustomers] = useState<CustomerListItem[]>([])
   const [search, setSearch] = useState('')
-  const [filterType, setFilterType] = useState<'all' | 'particulier' | 'bedrijf'>('all')
-  const [statusFilter, setStatusFilter] = useState<'active' | 'inactive' | 'all'>('active')
+  const [filterType, setFilterType] = useState<'all'
+  | 'particulier'
+  | 'bedrijf'>('all')
+  const [statusFilter, setStatusFilter] = useState<'active' | 'inactive' | 'all'>(
+    'active',
+  )
   const [sortOption, setSortOption] = useState<
     'created_at_desc' | 'created_at_asc' | 'name_asc' | 'name_desc'
   >('created_at_desc')
@@ -387,49 +460,37 @@ const CustomersListPage: React.FC = () => {
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
 
   const navigate = useNavigate()
-  const location = useLocation()
 
-  const buildQueryParams = () => {
-    const params = new URLSearchParams()
-
-    if (search.trim().length > 0) {
-      params.set('search', search.trim())
-    }
-    if (filterType !== 'all') {
-      params.set('customer_type', filterType)
-    }
-    params.set('status', statusFilter)
-
-    switch (sortOption) {
-      case 'created_at_desc':
-        params.set('sort_by', 'created_at')
-        params.set('sort_dir', 'desc')
-        break
-      case 'created_at_asc':
-        params.set('sort_by', 'created_at')
-        params.set('sort_dir', 'asc')
-        break
-      case 'name_asc':
-        params.set('sort_by', 'name')
-        params.set('sort_dir', 'asc')
-        break
-      case 'name_desc':
-        params.set('sort_by', 'name')
-        params.set('sort_dir', 'desc')
-        break
-    }
-
-    return params
-  }
-
-  const load = async () => {
+  const loadCustomers = async () => {
     setLoading(true)
     setError(null)
     try {
-      const params = buildQueryParams()
+      const params = new URLSearchParams()
+      if (search.trim()) params.set('search', search.trim())
+      if (filterType !== 'all') params.set('type', filterType)
+      if (statusFilter !== 'all') params.set('status', statusFilter)
+
+      if (sortOption === 'created_at_desc') {
+        params.set('sort_by', 'created_at')
+        params.set('sort_dir', 'desc')
+      } else if (sortOption === 'created_at_asc') {
+        params.set('sort_by', 'created_at')
+        params.set('sort_dir', 'asc')
+      } else if (sortOption === 'name_asc') {
+        params.set('sort_by', 'name')
+        params.set('sort_dir', 'asc')
+      } else if (sortOption === 'name_desc') {
+        params.set('sort_by', 'name')
+        params.set('sort_dir', 'desc')
+      }
+
       const res = await apiFetch(`/api/admin/customers?${params.toString()}`)
+      if (!res.ok) {
+        throw new Error('Failed to load customers')
+      }
+
       const data: CustomersListResponse = await res.json()
-      setCustomers(data.items)
+      setCustomers(data.items || [])
     } catch (err: any) {
       if (err.message === 'unauthorized') {
         setStoredToken(null)
@@ -444,34 +505,44 @@ const CustomersListPage: React.FC = () => {
   }
 
   useEffect(() => {
-    const state = location.state as { message?: string } | undefined
-    if (state && state.message) {
-      setSuccessMessage(state.message)
-      window.history.replaceState({}, document.title)
-    }
-
-    // eerste load
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    load()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    loadCustomers()
   }, [])
+
+  const handleTypeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    setFilterType(e.target.value as any)
+  }
+
+  const handleStatusChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    setStatusFilter(e.target.value as any)
+  }
+
+  const handleSortChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    setSortOption(e.target.value as any)
+  }
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    load()
+    loadCustomers()
   }
 
   const handleDeactivate = async (id: string) => {
-    const confirmed = window.confirm(
-      'Weet je zeker dat je deze klant wilt deactiveren? Dit is een zachte verwijdering; de klant blijft in de database maar wordt niet meer actief gebruikt.',
-    )
-    if (!confirmed) return
+    if (
+      !window.confirm(
+        'Weet je zeker dat je deze klant wilt deactiveren? Hij kan dan niet meer inloggen.',
+      )
+    ) {
+      return
+    }
 
-    setError(null)
     try {
-      await apiFetch(`/api/admin/customers/${id}`, { method: 'DELETE' })
-      setSuccessMessage('Klant gedeactiveerd.')
-      await load()
+      const res = await apiFetch(`/api/admin/customers/${id}/deactivate`, {
+        method: 'POST',
+      })
+      if (!res.ok) {
+        throw new Error('Failed to deactivate customer')
+      }
+      setSuccessMessage('Klant is gedeactiveerd.')
+      await loadCustomers()
     } catch (err: any) {
       if (err.message === 'unauthorized') {
         setStoredToken(null)
@@ -483,67 +554,119 @@ const CustomersListPage: React.FC = () => {
     }
   }
 
-  const handleTypeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const value = e.target.value as 'all' | 'particulier' | 'bedrijf'
-    setFilterType(value)
-    load()
+  const handleActivate = async (id: string) => {
+    try {
+      const res = await apiFetch(`/api/admin/customers/${id}/activate`, {
+        method: 'POST',
+      })
+      if (!res.ok) {
+        throw new Error('Failed to activate customer')
+      }
+      setSuccessMessage('Klant is geactiveerd.')
+      await loadCustomers()
+    } catch (err: any) {
+      if (err.message === 'unauthorized') {
+        setStoredToken(null)
+        navigate('/login')
+        return
+      }
+      console.error(err)
+      setError('Kon klant niet activeren.')
+    }
   }
 
-  const handleStatusChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const value = e.target.value as 'active' | 'inactive' | 'all'
-    setStatusFilter(value)
-    load()
-  }
+  const handleResetPassword = async (id: string) => {
+    if (
+      !window.confirm(
+        'Weet je zeker dat je een nieuwe wachtwoord-reset link wilt sturen naar deze klant?',
+      )
+    ) {
+      return
+    }
 
-  const handleSortChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const value = e.target.value as
-      | 'created_at_desc'
-      | 'created_at_asc'
-      | 'name_asc'
-      | 'name_desc'
-    setSortOption(value)
-    load()
+    try {
+      const res = await apiFetch(`/api/admin/customers/${id}/reset_password`, {
+        method: 'POST',
+      })
+      if (!res.ok) {
+        throw new Error('Failed to reset password')
+      }
+      setSuccessMessage('Wachtwoord-reset link is aangemaakt en verstuurd.')
+    } catch (err: any) {
+      if (err.message === 'unauthorized') {
+        setStoredToken(null)
+        navigate('/login')
+        return
+      }
+      console.error(err)
+      setError('Kon wachtwoord-reset niet uitvoeren.')
+    }
   }
 
   return (
     <div>
       <div
         style={{
-          marginBottom: '1rem',
           display: 'flex',
           justifyContent: 'space-between',
-          alignItems: 'center',
+          alignItems: 'flex-end',
+          marginBottom: '1rem',
         }}
       >
-        <h1 style={{ fontSize: '1.1rem', fontWeight: 600 }}>Klanten</h1>
-        <span style={{ fontSize: '0.8rem', color: '#6b7280' }}>
-          Totaal: {customers.length}
-        </span>
+        <div>
+          <h1
+            style={{
+              fontSize: '1.1rem',
+              fontWeight: 600,
+              marginBottom: '0.1rem',
+            }}
+          >
+            Klanten
+          </h1>
+          <span style={{ fontSize: '0.8rem', color: '#6b7280' }}>
+            Totaal: {customers.length}
+          </span>
+        </div>
+
+        {successMessage && (
+          <div
+            style={{
+              marginBottom: '0.5rem',
+              padding: '0.5rem 0.75rem',
+              backgroundColor: '#dcfce7',
+              color: '#166534',
+              borderRadius: 4,
+              fontSize: '0.85rem',
+            }}
+          >
+            {successMessage}
+          </div>
+        )}
       </div>
 
-      {successMessage && (
+      {error && (
         <div
           style={{
             marginBottom: '0.75rem',
             padding: '0.5rem 0.75rem',
-            fontSize: '0.85rem',
-            backgroundColor: '#dcfce7',
-            color: '#166534',
+            backgroundColor: '#fee2e2',
+            color: '#991b1b',
             borderRadius: 4,
+            fontSize: '0.85rem',
           }}
         >
-          {successMessage}
+          {error}
         </div>
       )}
 
       <form
         onSubmit={handleSearchSubmit}
         style={{
-          marginBottom: '0.75rem',
           display: 'flex',
           flexWrap: 'wrap',
           gap: '0.5rem',
           alignItems: 'center',
+          marginBottom: '0.75rem',
         }}
       >
         <input
@@ -564,21 +687,21 @@ const CustomersListPage: React.FC = () => {
           value={filterType}
           onChange={handleTypeChange}
           style={{
-            padding: '0.4rem 0.5rem',
+            padding: '0.35rem 0.5rem',
             borderRadius: 4,
             border: '1px solid #d1d5db',
             fontSize: '0.85rem',
           }}
         >
           <option value="all">Type: alle</option>
-          <option value="particulier">Alleen particulieren</option>
-          <option value="bedrijf">Alleen bedrijven</option>
+          <option value="particulier">Particulieren</option>
+          <option value="bedrijf">Bedrijven</option>
         </select>
         <select
           value={statusFilter}
           onChange={handleStatusChange}
           style={{
-            padding: '0.4rem 0.5rem',
+            padding: '0.35rem 0.5rem',
             borderRadius: 4,
             border: '1px solid #d1d5db',
             fontSize: '0.85rem',
@@ -586,13 +709,13 @@ const CustomersListPage: React.FC = () => {
         >
           <option value="active">Alleen actieve</option>
           <option value="inactive">Alleen gedeactiveerde</option>
-          <option value="all">Alle klanten</option>
+          <option value="all">Actief + gedeactiveerd</option>
         </select>
         <select
           value={sortOption}
           onChange={handleSortChange}
           style={{
-            padding: '0.4rem 0.5rem',
+            padding: '0.35rem 0.5rem',
             borderRadius: 4,
             border: '1px solid #d1d5db',
             fontSize: '0.85rem',
@@ -600,211 +723,234 @@ const CustomersListPage: React.FC = () => {
         >
           <option value="created_at_desc">Datum aangemaakt – nieuwste eerst</option>
           <option value="created_at_asc">Datum aangemaakt – oudste eerst</option>
-          <option value="name_asc">Naam – A–Z</option>
-          <option value="name_desc">Naam – Z–A</option>
+          <option value="name_asc">Naam A-Z</option>
+          <option value="name_desc">Naam Z-A</option>
         </select>
         <button
           type="submit"
+          disabled={loading}
           style={{
             padding: '0.4rem 0.75rem',
             borderRadius: 4,
             border: 'none',
             backgroundColor: '#2563eb',
             color: '#fff',
-            fontSize: '0.9rem',
-            cursor: 'pointer',
+            fontSize: '0.85rem',
+            fontWeight: 500,
+            cursor: loading ? 'default' : 'pointer',
           }}
         >
           Zoeken
         </button>
       </form>
 
-      {loading && <p style={{ fontSize: '0.85rem' }}>Laden...</p>}
-
-      {error && (
-        <div
+      <div
+        style={{
+          borderRadius: 6,
+          overflow: 'hidden',
+          border: '1px solid #e5e7eb',
+          backgroundColor: '#fff',
+        }}
+      >
+        <table
           style={{
-            marginBottom: '0.75rem',
-            padding: '0.5rem 0.75rem',
+            width: '100%',
+            borderCollapse: 'collapse',
             fontSize: '0.85rem',
-            backgroundColor: '#fee2e2',
-            color: '#b91c1c',
-            borderRadius: 4,
+            backgroundColor: '#fff',
+            borderRadius: 6,
+            overflow: 'hidden',
+            boxShadow: '0 1px 2px rgba(15,23,42,0.05)',
           }}
         >
-          {error}
-        </div>
-      )}
-
-      {!loading && customers.length === 0 && (
-        <p style={{ fontSize: '0.9rem', color: '#6b7280' }}>Geen klanten gevonden.</p>
-      )}
-
-      {customers.length > 0 && (
-        <div style={{ overflowX: 'auto' }}>
-          <table
-            style={{
-              width: '100%',
-              borderCollapse: 'collapse',
-              fontSize: '0.85rem',
-              backgroundColor: '#fff',
-              borderRadius: 6,
-              overflow: 'hidden',
-              boxShadow: '0 1px 2px rgba(15,23,42,0.05)',
-            }}
-          >
-            <thead>
-              <tr
+          <thead>
+            <tr
+              style={{
+                backgroundColor: '#f9fafb',
+                textAlign: 'left',
+              }}
+            >
+              <th
                 style={{
-                  backgroundColor: '#f9fafb',
-                  textAlign: 'left',
+                  padding: '0.4rem 0.6rem',
+                  borderBottom: '1px solid #e5e7eb',
                 }}
               >
-                <th
+                Naam
+              </th>
+              <th
+                style={{
+                  padding: '0.4rem 0.6rem',
+                  borderBottom: '1px solid #e5e7eb',
+                }}
+              >
+                Email
+              </th>
+              <th
+                style={{
+                  padding: '0.4rem 0.6rem',
+                  borderBottom: '1px solid #e5e7eb',
+                }}
+              >
+                Type
+              </th>
+              <th
+                style={{
+                  padding: '0.4rem 0.6rem',
+                  borderBottom: '1px solid #e5e7eb',
+                }}
+              >
+                Bedrijf
+              </th>
+              <th
+                style={{
+                  padding: '0.4rem 0.6rem',
+                  borderBottom: '1px solid #e5e7eb',
+                }}
+              >
+                Stad
+              </th>
+              <th
+                style={{
+                  padding: '0.4rem 0.6rem',
+                  borderBottom: '1px solid #e5e7eb',
+                }}
+              >
+                Staat
+              </th>
+              {/* NIEUW: Status-kolom */}
+              <th
+                style={{
+                  padding: '0.4rem 0.6rem',
+                  borderBottom: '1px solid #e5e7eb',
+                }}
+              >
+                Status
+              </th>
+              <th
+                style={{
+                  padding: '0.4rem 0.6rem',
+                  borderBottom: '1px solid #e5e7eb',
+                }}
+              >
+                Acties
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {customers.map(c => (
+              <tr
+                key={c.id}
+                onClick={() => navigate(`/customers/${c.id}`)}
+                style={{
+                  cursor: 'pointer',
+                  backgroundColor: c.is_active ? 'transparent' : '#f9fafb',
+                  opacity: c.is_active ? 1 : 0.7,
+                }}
+              >
+                <td
                   style={{
                     padding: '0.4rem 0.6rem',
-                    borderBottom: '1px solid #e5e7eb',
+                    borderBottom: '1px solid #f3f4f6',
                   }}
                 >
-                  Naam
-                </th>
-                <th
+                  {c.first_name} {c.last_name}
+                </td>
+                <td
                   style={{
                     padding: '0.4rem 0.6rem',
-                    borderBottom: '1px solid #e5e7eb',
+                    borderBottom: '1px solid #f3f4f6',
                   }}
                 >
-                  Email
-                </th>
-                <th
+                  {c.email}
+                </td>
+                <td
                   style={{
                     padding: '0.4rem 0.6rem',
-                    borderBottom: '1px solid #e5e7eb',
+                    borderBottom: '1px solid #f3f4f6',
                   }}
                 >
-                  Type
-                </th>
-                <th
+                  {c.customer_type === 'bedrijf' ? 'Bedrijf' : 'Particulier'}
+                </td>
+                <td
                   style={{
                     padding: '0.4rem 0.6rem',
-                    borderBottom: '1px solid #e5e7eb',
+                    borderBottom: '1px solid #f3f4f6',
                   }}
                 >
-                  Bedrijf
-                </th>
-                <th
+                  {c.company_name || '-'}
+                </td>
+                <td
                   style={{
                     padding: '0.4rem 0.6rem',
-                    borderBottom: '1px solid #e5e7eb',
+                    borderBottom: '1px solid #f3f4f6',
                   }}
                 >
-                  Stad
-                </th>
-                <th
+                  {c.address_city || '-'}
+                </td>
+                <td
                   style={{
                     padding: '0.4rem 0.6rem',
-                    borderBottom: '1px solid #e5e7eb',
+                    borderBottom: '1px solid #f3f4f6',
                   }}
                 >
-                  Staat
-                </th>
-                <th
+                  {c.address_state || '-'}
+                </td>
+                {/* NIEUW: Status-label */}
+                <td
                   style={{
                     padding: '0.4rem 0.6rem',
-                    borderBottom: '1px solid #e5e7eb',
+                    borderBottom: '1px solid #f3f4f6',
                   }}
                 >
-                  Acties
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {customers.map(c => (
-                <tr
-                  key={c.id}
-                  onClick={() => navigate(`/customers/${c.id}`)}
+                  {(() => {
+                    const status = getCustomerStatusDisplay(c)
+                    return (
+                      <span
+                        style={{
+                          display: 'inline-block',
+                          padding: '0.1rem 0.45rem',
+                          borderRadius: 9999,
+                          fontSize: '0.75rem',
+                          fontWeight: 500,
+                          backgroundColor: status.backgroundColor,
+                          color: status.color,
+                          border: `1px solid ${status.borderColor}`,
+                        }}
+                      >
+                        {status.label}
+                      </span>
+                    )
+                  })()}
+                </td>
+                <td
                   style={{
-                    cursor: 'pointer',
-                    backgroundColor: c.is_active ? 'transparent' : '#f9fafb',
-                    opacity: c.is_active ? 1 : 0.7,
+                    padding: '0.4rem 0.6rem',
+                    borderBottom: '1px solid #f3f4f6',
+                    whiteSpace: 'nowrap',
                   }}
                 >
-                  <td
+                  <button
+                    type="button"
+                    onClick={e => {
+                      e.stopPropagation()
+                      navigate(`/customers/${c.id}/edit`)
+                    }}
                     style={{
-                      padding: '0.4rem 0.6rem',
-                      borderBottom: '1px solid #f3f4f6',
+                      padding: '0.25rem 0.5rem',
+                      marginRight: '0.35rem',
+                      borderRadius: 4,
+                      border: '1px solid #d1d5db',
+                      backgroundColor: '#f9fafb',
+                      fontSize: '0.8rem',
+                      cursor: 'pointer',
                     }}
                   >
-                    {c.first_name} {c.last_name}
-                  </td>
-                  <td
-                    style={{
-                      padding: '0.4rem 0.6rem',
-                      borderBottom: '1px solid #f3f4f6',
-                    }}
-                  >
-                    {c.email}
-                  </td>
-                  <td
-                    style={{
-                      padding: '0.4rem 0.6rem',
-                      borderBottom: '1px solid #f3f4f6',
-                    }}
-                  >
-                    {c.customer_type === 'bedrijf' ? 'Bedrijf' : 'Particulier'}
-                  </td>
-                  <td
-                    style={{
-                      padding: '0.4rem 0.6rem',
-                      borderBottom: '1px solid #f3f4f6',
-                    }}
-                  >
-                    {c.company_name || '-'}
-                  </td>
-                  <td
-                    style={{
-                      padding: '0.4rem 0.6rem',
-                      borderBottom: '1px solid #f3f4f6',
-                    }}
-                  >
-                    {c.address_city || '-'}
-                  </td>
-                  <td
-                    style={{
-                      padding: '0.4rem 0.6rem',
-                      borderBottom: '1px solid #f3f4f6',
-                    }}
-                  >
-                    {c.address_state || '-'}
-                  </td>
-                  <td
-                    style={{
-                      padding: '0.4rem 0.6rem',
-                      borderBottom: '1px solid #f3f4f6',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
+                    Bewerken
+                  </button>
+                  {c.is_active ? (
                     <button
                       type="button"
-                      onClick={e => {
-                        e.stopPropagation()
-                        navigate(`/customers/${c.id}/edit`)
-                      }}
-                      style={{
-                        padding: '0.25rem 0.5rem',
-                        marginRight: '0.35rem',
-                        borderRadius: 4,
-                        border: '1px solid #d1d5db',
-                        backgroundColor: '#f9fafb',
-                        fontSize: '0.8rem',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      Bewerken
-                    </button>
-                    <button
-                      type="button"
-                      disabled={!c.is_active}
                       onClick={e => {
                         e.stopPropagation()
                         handleDeactivate(c.id)
@@ -815,19 +961,82 @@ const CustomersListPage: React.FC = () => {
                         border: '1px solid #fecaca',
                         backgroundColor: '#fef2f2',
                         fontSize: '0.8rem',
-                        cursor: c.is_active ? 'pointer' : 'default',
-                        opacity: c.is_active ? 1 : 0.6,
+                        cursor: 'pointer',
                       }}
                     >
                       Deactiveren
                     </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={e => {
+                        e.stopPropagation()
+                        handleActivate(c.id)
+                      }}
+                      style={{
+                        padding: '0.25rem 0.5rem',
+                        borderRadius: 4,
+                        border: '1px solid #bbf7d0',
+                        backgroundColor: '#dcfce7',
+                        fontSize: '0.8rem',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Activeren
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={e => {
+                      e.stopPropagation()
+                      handleResetPassword(c.id)
+                    }}
+                    style={{
+                      marginLeft: '0.35rem',
+                      padding: '0.25rem 0.5rem',
+                      borderRadius: 4,
+                      border: '1px solid #2563eb',
+                      backgroundColor: '#eff6ff',
+                      fontSize: '0.8rem',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Reset wachtwoord
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {!loading && customers.length === 0 && (
+              <tr>
+                <td
+                  colSpan={8}
+                  style={{
+                    padding: '0.75rem 0.6rem',
+                    fontSize: '0.85rem',
+                    color: '#6b7280',
+                    textAlign: 'center',
+                  }}
+                >
+                  Geen klanten gevonden.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+
+        {loading && (
+          <div
+            style={{
+              padding: '0.75rem 0.6rem',
+              fontSize: '0.85rem',
+              textAlign: 'center',
+              color: '#6b7280',
+            }}
+          >
+            Klanten aan het laden...
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -849,6 +1058,9 @@ const CustomerDetailPage: React.FC = () => {
       setError(null)
       try {
         const res = await apiFetch(`/api/admin/customers/${id}`)
+        if (!res.ok) {
+          throw new Error('Failed to load customer')
+        }
         const data: CustomerDetail = await res.json()
         setCustomer(data)
       } catch (err: any) {
@@ -858,30 +1070,97 @@ const CustomerDetailPage: React.FC = () => {
           return
         }
         console.error(err)
-        setError('Kon klant niet laden.')
+        setError('Kon klantdetails niet laden.')
       } finally {
         setLoading(false)
       }
     }
     load()
-  }, [id, navigate])
+  }, [id])
 
-  const handleResetPassword = async () => {
-    if (!id) return
-    const confirmed = window.confirm(
-      'Weet je zeker dat je een nieuwe wachtwoord-reset link wilt aanmaken voor deze klant?',
-    )
-    if (!confirmed) return
-
-    setActionError(null)
-    setActionSuccess(null)
-    setActionLoading(true)
+  const handleDeactivate = async () => {
+    if (
+      !window.confirm(
+        'Weet je zeker dat je deze klant wilt deactiveren? Hij kan dan niet meer inloggen.',
+      )
+    ) {
+      return
+    }
 
     try {
+      setActionLoading(true)
+      setActionError(null)
+      setActionSuccess(null)
+      const res = await apiFetch(`/api/admin/customers/${id}/deactivate`, {
+        method: 'POST',
+      })
+      if (!res.ok) {
+        throw new Error('Failed to deactivate customer')
+      }
+      setActionSuccess('Klant is gedeactiveerd.')
+      const updatedRes = await apiFetch(`/api/admin/customers/${id}`)
+      const updated: CustomerDetail = await updatedRes.json()
+      setCustomer(updated)
+    } catch (err: any) {
+      if (err.message === 'unauthorized') {
+        setStoredToken(null)
+        navigate('/login')
+        return
+      }
+      console.error(err)
+      setActionError('Kon klant niet deactiveren.')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const handleActivate = async () => {
+    try {
+      setActionLoading(true)
+      setActionError(null)
+      setActionSuccess(null)
+      const res = await apiFetch(`/api/admin/customers/${id}/activate`, {
+        method: 'POST',
+      })
+      if (!res.ok) {
+        throw new Error('Failed to activate customer')
+      }
+      setActionSuccess('Klant is geactiveerd.')
+      const updatedRes = await apiFetch(`/api/admin/customers/${id}`)
+      const updated: CustomerDetail = await updatedRes.json()
+      setCustomer(updated)
+    } catch (err: any) {
+      if (err.message === 'unauthorized') {
+        setStoredToken(null)
+        navigate('/login')
+        return
+      }
+      console.error(err)
+      setActionError('Kon klant niet activeren.')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const handleResetPassword = async () => {
+    if (
+      !window.confirm(
+        'Weet je zeker dat je een nieuwe wachtwoord-reset link wilt sturen naar deze klant?',
+      )
+    ) {
+      return
+    }
+
+    try {
+      setActionLoading(true)
+      setActionError(null)
+      setActionSuccess(null)
       const res = await apiFetch(`/api/admin/customers/${id}/reset_password`, {
         method: 'POST',
-        body: JSON.stringify({}),
       })
+      if (!res.ok) {
+        throw new Error('Failed to reset password')
+      }
       const data: PasswordResetResponse = await res.json()
       let msg = 'Wachtwoord-reset link aangemaakt en verstuurd (stub).'
       if (data.token) {
@@ -913,109 +1192,6 @@ const CustomerDetailPage: React.FC = () => {
           onClick={() => navigate('/customers')}
           style={{
             marginBottom: '0.75rem',
-            padding: '0.3rem 0.6rem',
-            borderRadius: 4,
-            border: '1px solid #d1d5db',
-            fontSize: '0.85rem',
-            cursor: 'pointer',
-          }}
-        >
-          ← Terug
-        </button>
-        <div
-          style={{
-            padding: '0.5rem 0.75rem',
-            backgroundColor: '#fee2e2',
-            color: '#b91c1c',
-            borderRadius: 4,
-          }}
-        >
-          {error}
-        </div>
-      </div>
-    )
-  }
-
-  if (!customer) return null
-
-  return (
-    <div>
-      <button
-        type="button"
-        onClick={() => navigate('/customers')}
-        style={{
-          marginBottom: '0.75rem',
-          padding: '0.3rem 0.6rem',
-          borderRadius: 4,
-          border: '1px solid #d1d5db',
-          fontSize: '0.85rem',
-          cursor: 'pointer',
-        }}
-      >
-        ← Terug
-      </button>
-
-      <h1
-        style={{
-          fontSize: '1.1rem',
-          fontWeight: 600,
-          marginBottom: '0.25rem',
-        }}
-      >
-        {customer.first_name} {customer.last_name}
-      </h1>
-      <p
-        style={{
-          fontSize: '0.85rem',
-          color: '#6b7280',
-          marginBottom: '0.75rem',
-        }}
-      >
-        {customer.customer_type === 'bedrijf' ? 'Bedrijf' : 'Particulier'}
-        {customer.company_name ? ` • ${customer.company_name}` : ''}
-      </p>
-
-      {actionSuccess && (
-        <div
-          style={{
-            marginBottom: '0.75rem',
-            padding: '0.5rem 0.75rem',
-            fontSize: '0.85rem',
-            backgroundColor: '#dcfce7',
-            color: '#166534',
-            borderRadius: 4,
-          }}
-        >
-          {actionSuccess}
-        </div>
-      )}
-      {actionError && (
-        <div
-          style={{
-            marginBottom: '0.75rem',
-            padding: '0.5rem 0.75rem',
-            fontSize: '0.85rem',
-            backgroundColor: '#fee2e2',
-            color: '#b91c1c',
-            borderRadius: 4,
-          }}
-        >
-          {actionError}
-        </div>
-      )}
-
-      <div
-        style={{
-          marginBottom: '0.75rem',
-          display: 'flex',
-          gap: '0.5rem',
-          flexWrap: 'wrap',
-        }}
-      >
-        <button
-          type="button"
-          onClick={() => navigate(`/customers/${customer.id}/edit`)}
-          style={{
             padding: '0.35rem 0.7rem',
             borderRadius: 4,
             border: '1px solid #d1d5db',
@@ -1024,26 +1200,184 @@ const CustomerDetailPage: React.FC = () => {
             cursor: 'pointer',
           }}
         >
-          Bewerken
+          ← Terug naar klanten
         </button>
-        {customer.hashed_password && (
-          <button
-            type="button"
-            onClick={handleResetPassword}
-            disabled={actionLoading}
+        <div
+          style={{
+            padding: '0.75rem 0.9rem',
+            borderRadius: 6,
+            backgroundColor: '#fee2e2',
+            color: '#991b1b',
+            fontSize: '0.9rem',
+          }}
+        >
+          {error}
+        </div>
+      </div>
+    )
+  }
+
+  if (!customer) {
+    return null
+  }
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => navigate('/customers')}
+        style={{
+          marginBottom: '0.75rem',
+          padding: '0.35rem 0.7rem',
+          borderRadius: 4,
+          border: '1px solid #d1d5db',
+          backgroundColor: '#f9fafb',
+          fontSize: '0.85rem',
+          cursor: 'pointer',
+        }}
+      >
+        ← Terug naar klanten
+      </button>
+
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'flex-start',
+          marginBottom: '0.75rem',
+        }}
+      >
+        <div>
+          <h1
             style={{
-              padding: '0.35rem 0.7rem',
-              borderRadius: 4,
-              border: '1px solid #fecaca',
-              backgroundColor: '#fef2f2',
-              fontSize: '0.85rem',
-              cursor: actionLoading ? 'default' : 'pointer',
-              opacity: actionLoading ? 0.7 : 1,
+              fontSize: '1.1rem',
+              fontWeight: 600,
+              marginBottom: '0.2rem',
             }}
           >
-            {actionLoading ? 'Bezig met reset...' : 'Reset wachtwoord'}
-          </button>
-        )}
+            {customer.first_name} {customer.last_name}
+          </h1>
+          <p
+            style={{
+              fontSize: '0.85rem',
+              color: '#6b7280',
+              margin: 0,
+            }}
+          >
+            {customer.customer_type === 'bedrijf' ? 'Bedrijf' : 'Particulier'}
+            {customer.company_name ? ` • ${customer.company_name}` : ''}
+          </p>
+          {(() => {
+            const status = getCustomerStatusDisplay(customer)
+            return (
+              <span
+                style={{
+                  display: 'inline-block',
+                  padding: '0.15rem 0.55rem',
+                  borderRadius: 9999,
+                  fontSize: '0.75rem',
+                  fontWeight: 500,
+                  backgroundColor: status.backgroundColor,
+                  color: status.color,
+                  border: `1px solid ${status.borderColor}`,
+                  marginTop: '0.3rem',
+                }}
+              >
+                {status.label}
+              </span>
+            )
+          })()}
+        </div>
+
+        <div style={{ textAlign: 'right' }}>
+          {actionSuccess && (
+            <div
+              style={{
+                marginBottom: '0.5rem',
+                padding: '0.5rem 0.75rem',
+                borderRadius: 4,
+                backgroundColor: '#dcfce7',
+                color: '#166534',
+                fontSize: '0.85rem',
+              }}
+            >
+              {actionSuccess}
+            </div>
+          )}
+          {actionError && (
+            <div
+              style={{
+                marginBottom: '0.5rem',
+                padding: '0.5rem 0.75rem',
+                borderRadius: 4,
+                backgroundColor: '#fee2e2',
+                color: '#991b1b',
+                fontSize: '0.85rem',
+              }}
+            >
+              {actionError}
+            </div>
+          )}
+
+          <div>
+            {customer.is_active ? (
+              <button
+                type="button"
+                onClick={handleDeactivate}
+                disabled={actionLoading}
+                style={{
+                  marginRight: '0.35rem',
+                  padding: '0.35rem 0.7rem',
+                  borderRadius: 4,
+                  border: '1px solid #fecaca',
+                  backgroundColor: '#fef2f2',
+                  fontSize: '0.85rem',
+                  cursor: actionLoading ? 'default' : 'pointer',
+                  opacity: actionLoading ? 0.7 : 1,
+                }}
+              >
+                {actionLoading ? 'Bezig...' : 'Deactiveren'}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleActivate}
+                disabled={actionLoading}
+                style={{
+                  marginRight: '0.35rem',
+                  padding: '0.35rem 0.7rem',
+                  borderRadius: 4,
+                  border: '1px solid #bbf7d0',
+                  backgroundColor: '#dcfce7',
+                  fontSize: '0.85rem',
+                  cursor: actionLoading ? 'default' : 'pointer',
+                  opacity: actionLoading ? 0.7 : 1,
+                }}
+              >
+                {actionLoading ? 'Bezig...' : 'Activeren'}
+              </button>
+            )}
+{/* reset-wachtwoord knop alleen tonen als klant actief is */}
+{customer.is_active ? (
+  <button
+    type="button"
+    onClick={handleResetPassword}
+    disabled={actionLoading}
+    style={{
+      padding: '0.35rem 0.7rem',
+      borderRadius: 4,
+      border: '1px solid #2563eb',
+      backgroundColor: '#eff6ff',
+      fontSize: '0.85rem',
+      cursor: actionLoading ? 'default' : 'pointer',
+      opacity: actionLoading ? 0.7 : 1,
+    }}
+  >
+    {actionLoading ? 'Bezig met reset...' : 'Reset wachtwoord'}
+  </button>
+) : null}
+          </div>
+        </div>
       </div>
 
       <div
@@ -1080,6 +1414,12 @@ const CustomerDetailPage: React.FC = () => {
             <strong>Actief:</strong> {customer.is_active ? 'Ja' : 'Nee'}
           </p>
           <p style={{ fontSize: '0.85rem' }}>
+            <strong>Login aangemaakt:</strong> {customer.has_login ? 'Ja' : 'Nee'}
+          </p>
+          <p style={{ fontSize: '0.85rem' }}>
+            <strong>Portal status:</strong> {customer.portal_status || '-'}
+          </p>
+          <p style={{ fontSize: '0.85rem' }}>
             <strong>Admin:</strong> {customer.is_admin ? 'Ja' : 'Nee'}
           </p>
         </section>
@@ -1103,11 +1443,16 @@ const CustomerDetailPage: React.FC = () => {
           </h2>
           <p style={{ fontSize: '0.85rem' }}>
             {customer.address_street} {customer.address_ext_number}
-            {customer.address_int_number ? `, Int. ${customer.address_int_number}` : ''}
+            {customer.address_int_number
+              ? `, Int. ${customer.address_int_number}`
+              : ''}
           </p>
-          <p style={{ fontSize: '0.85rem' }}>{customer.address_neighborhood}</p>
           <p style={{ fontSize: '0.85rem' }}>
-            {customer.address_postal_code} {customer.address_city}, {customer.address_state}
+            {customer.address_neighborhood}
+          </p>
+          <p style={{ fontSize: '0.85rem' }}>
+            {customer.address_postal_code} {customer.address_city},{' '}
+            {customer.address_state}
           </p>
           <p style={{ fontSize: '0.85rem' }}>{customer.address_country}</p>
         </section>
@@ -1133,12 +1478,12 @@ const CustomerDetailPage: React.FC = () => {
             <strong>Bedrijf:</strong> {customer.company_name || '-'}
           </p>
           <p style={{ fontSize: '0.85rem' }}>
-            <strong>RFC:</strong> {customer.tax_id || '-'}
+            <strong>BTW / Tax ID:</strong> {customer.tax_id || '-'}
           </p>
-          <p style={{ fontSize: '0.85rem', marginTop: '0.5rem' }}>
-            <strong>Omschrijving:</strong>
+          <p style={{ fontSize: '0.85rem' }}>
+            <strong>Omschrijving:</strong>{' '}
+            {customer.description ? customer.description : '-'}
           </p>
-          <p style={{ fontSize: '0.85rem' }}>{customer.description || '-'}</p>
         </section>
 
         <section
@@ -1159,10 +1504,12 @@ const CustomerDetailPage: React.FC = () => {
             Metadata
           </h2>
           <p style={{ fontSize: '0.8rem' }}>
-            <strong>Aangemaakt:</strong> {new Date(customer.created_at).toLocaleString()}
+            <strong>Aangemaakt:</strong>{' '}
+            {new Date(customer.created_at).toLocaleString()}
           </p>
           <p style={{ fontSize: '0.8rem' }}>
-            <strong>Bijgewerkt:</strong> {new Date(customer.updated_at).toLocaleString()}
+            <strong>Bijgewerkt:</strong>{' '}
+            {new Date(customer.updated_at).toLocaleString()}
           </p>
           {customer.deactivated_at && (
             <p style={{ fontSize: '0.8rem' }}>
@@ -1183,6 +1530,7 @@ const CustomerEditPage: React.FC = () => {
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [success, setSuccess] = useState<string | null>(null)
 
   useEffect(() => {
     const load = async () => {
@@ -1191,24 +1539,27 @@ const CustomerEditPage: React.FC = () => {
       setError(null)
       try {
         const res = await apiFetch(`/api/admin/customers/${id}`)
-        const c: CustomerDetail = await res.json()
+        if (!res.ok) {
+          throw new Error('Failed to load customer')
+        }
+        const data: CustomerDetail = await res.json()
         setForm({
-          email: c.email,
-          first_name: c.first_name,
-          last_name: c.last_name,
-          phone_number: c.phone_number || '',
-          customer_type: c.customer_type,
-          description: c.description || '',
-          company_name: c.company_name || '',
-          tax_id: c.tax_id || '',
-          address_street: c.address_street || '',
-          address_ext_number: c.address_ext_number || '',
-          address_int_number: c.address_int_number || '',
-          address_neighborhood: c.address_neighborhood || '',
-          address_city: c.address_city || '',
-          address_state: c.address_state || '',
-          address_postal_code: c.address_postal_code || '',
-          address_country: c.address_country || 'Mexico',
+          email: data.email || '',
+          first_name: data.first_name || '',
+          last_name: data.last_name || '',
+          phone_number: data.phone_number || '',
+          customer_type: data.customer_type,
+          description: data.description || '',
+          company_name: data.company_name || '',
+          tax_id: data.tax_id || '',
+          address_street: data.address_street || '',
+          address_ext_number: data.address_ext_number || '',
+          address_int_number: data.address_int_number || '',
+          address_neighborhood: data.address_neighborhood || '',
+          address_city: data.address_city || '',
+          address_state: data.address_state || '',
+          address_postal_code: data.address_postal_code || '',
+          address_country: data.address_country || 'Mexico',
         })
       } catch (err: any) {
         if (err.message === 'unauthorized') {
@@ -1217,13 +1568,14 @@ const CustomerEditPage: React.FC = () => {
           return
         }
         console.error(err)
-        setError('Kon klant niet laden.')
+        setError('Kon klantgegevens niet laden.')
       } finally {
         setLoading(false)
       }
     }
+
     load()
-  }, [id, navigate])
+  }, [id])
 
   const handleChange = (
     e: React.ChangeEvent<
@@ -1241,7 +1593,7 @@ const CustomerEditPage: React.FC = () => {
     if (!form.customer_type) return 'Klanttype is verplicht.'
     if (form.customer_type === 'bedrijf') {
       if (!form.company_name.trim() || !form.tax_id.trim()) {
-        return 'Voor een bedrijf zijn bedrijfsnaam en tax ID verplicht.'
+        return 'Bedrijfsnaam en BTW/Tax ID zijn verplicht voor bedrijven.'
       }
     }
     return null
@@ -1249,7 +1601,9 @@ const CustomerEditPage: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!id) return
+    setError(null)
+    setSuccess(null)
+
     const validationError = validate()
     if (validationError) {
       setError(validationError)
@@ -1257,13 +1611,15 @@ const CustomerEditPage: React.FC = () => {
     }
 
     setSaving(true)
-    setError(null)
     try {
-      await apiFetch(`/api/admin/customers/${id}`, {
+      const res = await apiFetch(`/api/admin/customers/${id}`, {
         method: 'PUT',
         body: JSON.stringify(form),
       })
-      navigate('/customers', { state: { message: 'Klant succesvol bijgewerkt.' } })
+      if (!res.ok) {
+        throw new Error('Failed to update customer')
+      }
+      setSuccess('Klantgegevens zijn opgeslagen.')
     } catch (err: any) {
       if (err.message === 'unauthorized') {
         setStoredToken(null)
@@ -1271,14 +1627,14 @@ const CustomerEditPage: React.FC = () => {
         return
       }
       console.error(err)
-      setError('Kon klant niet opslaan.')
+      setError('Kon klantgegevens niet opslaan.')
     } finally {
       setSaving(false)
     }
   }
 
   if (loading) {
-    return <p style={{ fontSize: '0.9rem' }}>Laden...</p>
+    return <p style={{ fontSize: '0.9rem' }}>Klantgegevens laden...</p>
   }
 
   return (
@@ -1288,21 +1644,22 @@ const CustomerEditPage: React.FC = () => {
         onClick={() => navigate('/customers')}
         style={{
           marginBottom: '0.75rem',
-          padding: '0.3rem 0.6rem',
+          padding: '0.35rem 0.7rem',
           borderRadius: 4,
           border: '1px solid #d1d5db',
+          backgroundColor: '#f9fafb',
           fontSize: '0.85rem',
           cursor: 'pointer',
         }}
       >
-        ← Terug
+        ← Terug naar klanten
       </button>
 
       <h1
         style={{
           fontSize: '1.1rem',
           fontWeight: 600,
-          marginBottom: '0.75rem',
+          marginBottom: '0.5rem',
         }}
       >
         Klant bewerken
@@ -1313,13 +1670,28 @@ const CustomerEditPage: React.FC = () => {
           style={{
             marginBottom: '0.75rem',
             padding: '0.5rem 0.75rem',
-            fontSize: '0.85rem',
-            backgroundColor: '#fee2e2',
-            color: '#b91c1c',
             borderRadius: 4,
+            backgroundColor: '#fee2e2',
+            color: '#991b1b',
+            fontSize: '0.85rem',
           }}
         >
           {error}
+        </div>
+      )}
+
+      {success && (
+        <div
+          style={{
+            marginBottom: '0.75rem',
+            padding: '0.5rem 0.75rem',
+            borderRadius: 4,
+            backgroundColor: '#dcfce7',
+            color: '#166534',
+            fontSize: '0.85rem',
+          }}
+        >
+          {success}
         </div>
       )}
 
@@ -1327,426 +1699,425 @@ const CustomerEditPage: React.FC = () => {
         onSubmit={handleSubmit}
         style={{
           backgroundColor: '#fff',
-          padding: '0.9rem 1rem',
+          padding: '0.75rem 0.9rem',
           borderRadius: 6,
           boxShadow: '0 1px 2px rgba(15,23,42,0.05)',
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-          gap: '0.75rem 1rem',
         }}
       >
-        {/* basisgegevens */}
-        <div>
-          <label
-            style={{
-              display: 'block',
-              fontSize: '0.85rem',
-              marginBottom: 4,
-            }}
-          >
-            Voornaam
-          </label>
-          <input
-            name="first_name"
-            value={form.first_name}
-            onChange={handleChange}
-            style={{
-              width: '100%',
-              padding: '0.4rem 0.5rem',
-              borderRadius: 4,
-              border: '1px solid #d1d5db',
-              fontSize: '0.9rem',
-            }}
-          />
-        </div>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+            gap: '0.75rem',
+          }}
+        >
+          <div>
+            <label
+              style={{
+                display: 'block',
+                fontSize: '0.85rem',
+                marginBottom: '0.25rem',
+              }}
+            >
+              Voornaam
+            </label>
+            <input
+              type="text"
+              name="first_name"
+              value={form.first_name}
+              onChange={handleChange}
+              style={{
+                width: '100%',
+                padding: '0.4rem 0.5rem',
+                borderRadius: 4,
+                border: '1px solid #d1d5db',
+                fontSize: '0.9rem',
+              }}
+            />
+          </div>
 
-        <div>
-          <label
-            style={{
-              display: 'block',
-              fontSize: '0.85rem',
-              marginBottom: 4,
-            }}
-          >
-            Achternaam
-          </label>
-          <input
-            name="last_name"
-            value={form.last_name}
-            onChange={handleChange}
-            style={{
-              width: '100%',
-              padding: '0.4rem 0.5rem',
-              borderRadius: 4,
-              border: '1px solid #d1d5db',
-              fontSize: '0.9rem',
-            }}
-          />
-        </div>
+          <div>
+            <label
+              style={{
+                display: 'block',
+                fontSize: '0.85rem',
+                marginBottom: '0.25rem',
+              }}
+            >
+              Achternaam
+            </label>
+            <input
+              type="text"
+              name="last_name"
+              value={form.last_name}
+              onChange={handleChange}
+              style={{
+                width: '100%',
+                padding: '0.4rem 0.5rem',
+                borderRadius: 4,
+                border: '1px solid #d1d5db',
+                fontSize: '0.9rem',
+              }}
+            />
+          </div>
 
-        <div>
-          <label
-            style={{
-              display: 'block',
-              fontSize: '0.85rem',
-              marginBottom: 4,
-            }}
-          >
-            Email
-          </label>
-          <input
-            type="email"
-            name="email"
-            value={form.email}
-            onChange={handleChange}
-            style={{
-              width: '100%',
-              padding: '0.4rem 0.5rem',
-              borderRadius: 4,
-              border: '1px solid #d1d5db',
-              fontSize: '0.9rem',
-            }}
-          />
-        </div>
+          <div>
+            <label
+              style={{
+                display: 'block',
+                fontSize: '0.85rem',
+                marginBottom: '0.25rem',
+              }}
+            >
+              Email
+            </label>
+            <input
+              type="email"
+              name="email"
+              value={form.email}
+              onChange={handleChange}
+              style={{
+                width: '100%',
+                padding: '0.4rem 0.5rem',
+                borderRadius: 4,
+                border: '1px solid #d1d5db',
+                fontSize: '0.9rem',
+              }}
+            />
+          </div>
 
-        <div>
-          <label
-            style={{
-              display: 'block',
-              fontSize: '0.85rem',
-              marginBottom: 4,
-            }}
-          >
-            Telefoon
-          </label>
-          <input
-            name="phone_number"
-            value={form.phone_number}
-            onChange={handleChange}
-            style={{
-              width: '100%',
-              padding: '0.4rem 0.5rem',
-              borderRadius: 4,
-              border: '1px solid #d1d5db',
-              fontSize: '0.9rem',
-            }}
-          />
-        </div>
+          <div>
+            <label
+              style={{
+                display: 'block',
+                fontSize: '0.85rem',
+                marginBottom: '0.25rem',
+              }}
+            >
+              Telefoon
+            </label>
+            <input
+              type="text"
+              name="phone_number"
+              value={form.phone_number}
+              onChange={handleChange}
+              style={{
+                width: '100%',
+                padding: '0.4rem 0.5rem',
+                borderRadius: 4,
+                border: '1px solid #d1d5db',
+                fontSize: '0.9rem',
+              }}
+            />
+          </div>
 
-        <div>
-          <label
-            style={{
-              display: 'block',
-              fontSize: '0.85rem',
-              marginBottom: 4,
-            }}
-          >
-            Klanttype
-          </label>
-          <select
-            name="customer_type"
-            value={form.customer_type}
-            onChange={handleChange}
-            style={{
-              width: '100%',
-              padding: '0.4rem 0.5rem',
-              borderRadius: 4,
-              border: '1px solid #d1d5db',
-              fontSize: '0.9rem',
-            }}
-          >
-            <option value="particulier">Particulier</option>
-            <option value="bedrijf">Bedrijf</option>
-          </select>
-        </div>
+          <div>
+            <label
+              style={{
+                display: 'block',
+                fontSize: '0.85rem',
+                marginBottom: '0.25rem',
+              }}
+            >
+              Klanttype
+            </label>
+            <select
+              name="customer_type"
+              value={form.customer_type}
+              onChange={handleChange}
+              style={{
+                width: '100%',
+                padding: '0.4rem 0.5rem',
+                borderRadius: 4,
+                border: '1px solid #d1d5db',
+                fontSize: '0.9rem',
+              }}
+            >
+              <option value="particulier">Particulier</option>
+              <option value="bedrijf">Bedrijf</option>
+            </select>
+          </div>
 
-        {form.customer_type === 'bedrijf' && (
-          <>
-            <div>
-              <label
-                style={{
-                  display: 'block',
-                  fontSize: '0.85rem',
-                  marginBottom: 4,
-                }}
-              >
-                Bedrijfsnaam
-              </label>
-              <input
-                name="company_name"
-                value={form.company_name}
-                onChange={handleChange}
-                style={{
-                  width: '100%',
-                  padding: '0.4rem 0.5rem',
-                  borderRadius: 4,
-                  border: '1px solid #d1d5db',
-                  fontSize: '0.9rem',
-                }}
-              />
-            </div>
+          <div>
+            <label
+              style={{
+                display: 'block',
+                fontSize: '0.85rem',
+                marginBottom: '0.25rem',
+              }}
+            >
+              Bedrijfsnaam
+            </label>
+            <input
+              type="text"
+              name="company_name"
+              value={form.company_name}
+              onChange={handleChange}
+              style={{
+                width: '100%',
+                padding: '0.4rem 0.5rem',
+                borderRadius: 4,
+                border: '1px solid #d1d5db',
+                fontSize: '0.9rem',
+              }}
+            />
+          </div>
 
-            <div>
-              <label
-                style={{
-                  display: 'block',
-                  fontSize: '0.85rem',
-                  marginBottom: 4,
-                }}
-              >
-                Tax ID (RFC)
-              </label>
-              <input
-                name="tax_id"
-                value={form.tax_id}
-                onChange={handleChange}
-                style={{
-                  width: '100%',
-                  padding: '0.4rem 0.5rem',
-                  borderRadius: 4,
-                  border: '1px solid #d1d5db',
-                  fontSize: '0.9rem',
-                }}
-              />
-            </div>
-          </>
-        )}
+          <div>
+            <label
+              style={{
+                display: 'block',
+                fontSize: '0.85rem',
+                marginBottom: '0.25rem',
+              }}
+            >
+              BTW / Tax ID
+            </label>
+            <input
+              type="text"
+              name="tax_id"
+              value={form.tax_id}
+              onChange={handleChange}
+              style={{
+                width: '100%',
+                padding: '0.4rem 0.5rem',
+                borderRadius: 4,
+                border: '1px solid #d1d5db',
+                fontSize: '0.9rem',
+              }}
+            />
+          </div>
 
-        <div style={{ gridColumn: '1 / -1' }}>
-          <label
-            style={{
-              display: 'block',
-              fontSize: '0.85rem',
-              marginBottom: 4,
-            }}
-          >
-            Omschrijving / Notities
-          </label>
-          <textarea
-            name="description"
-            value={form.description}
-            onChange={handleChange}
-            rows={3}
-            style={{
-              width: '100%',
-              padding: '0.4rem 0.5rem',
-              borderRadius: 4,
-              border: '1px solid #d1d5db',
-              fontSize: '0.9rem',
-              resize: 'vertical',
-            }}
-          />
-        </div>
+          <div style={{ gridColumn: '1 / -1' }}>
+            <label
+              style={{
+                display: 'block',
+                fontSize: '0.85rem',
+                marginBottom: '0.25rem',
+              }}
+            >
+              Omschrijving
+            </label>
+            <textarea
+              name="description"
+              value={form.description}
+              onChange={handleChange}
+              rows={3}
+              style={{
+                width: '100%',
+                padding: '0.4rem 0.5rem',
+                borderRadius: 4,
+                border: '1px solid #d1d5db',
+                fontSize: '0.9rem',
+                resize: 'vertical',
+              }}
+            />
+          </div>
 
-        <div style={{ gridColumn: '1 / -1', marginTop: '0.25rem' }}>
-          <h2
-            style={{
-              fontSize: '0.9rem',
-              fontWeight: 600,
-              marginBottom: '0.35rem',
-            }}
-          >
-            Adres
-          </h2>
-        </div>
+          <div>
+            <label
+              style={{
+                display: 'block',
+                fontSize: '0.85rem',
+                marginBottom: '0.25rem',
+              }}
+            >
+              Straat
+            </label>
+            <input
+              type="text"
+              name="address_street"
+              value={form.address_street}
+              onChange={handleChange}
+              style={{
+                width: '100%',
+                padding: '0.4rem 0.5rem',
+                borderRadius: 4,
+                border: '1px solid #d1d5db',
+                fontSize: '0.9rem',
+              }}
+            />
+          </div>
 
-        {/* adresvelden */}
-        <div>
-          <label
-            style={{
-              display: 'block',
-              fontSize: '0.85rem',
-              marginBottom: 4,
-            }}
-          >
-            Straat
-          </label>
-          <input
-            name="address_street"
-            value={form.address_street}
-            onChange={handleChange}
-            style={{
-              width: '100%',
-              padding: '0.4rem 0.5rem',
-              borderRadius: 4,
-              border: '1px solid #d1d5db',
-              fontSize: '0.9rem',
-            }}
-          />
-        </div>
+          <div>
+            <label
+              style={{
+                display: 'block',
+                fontSize: '0.85rem',
+                marginBottom: '0.25rem',
+              }}
+            >
+              Huisnummer
+            </label>
+            <input
+              type="text"
+              name="address_ext_number"
+              value={form.address_ext_number}
+              onChange={handleChange}
+              style={{
+                width: '100%',
+                padding: '0.4rem 0.5rem',
+                borderRadius: 4,
+                border: '1px solid #d1d5db',
+                fontSize: '0.9rem',
+              }}
+            />
+          </div>
 
-        <div>
-          <label
-            style={{
-              display: 'block',
-              fontSize: '0.85rem',
-              marginBottom: 4,
-            }}
-          >
-            Huisnummer
-          </label>
-          <input
-            name="address_ext_number"
-            value={form.address_ext_number}
-            onChange={handleChange}
-            style={{
-              width: '100%',
-              padding: '0.4rem 0.5rem',
-              borderRadius: 4,
-              border: '1px solid #d1d5db',
-              fontSize: '0.9rem',
-            }}
-          />
-        </div>
+          <div>
+            <label
+              style={{
+                display: 'block',
+                fontSize: '0.85rem',
+                marginBottom: '0.25rem',
+              }}
+            >
+              App./Int. nummer
+            </label>
+            <input
+              type="text"
+              name="address_int_number"
+              value={form.address_int_number}
+              onChange={handleChange}
+              style={{
+                width: '100%',
+                padding: '0.4rem 0.5rem',
+                borderRadius: 4,
+                border: '1px solid #d1d5db',
+                fontSize: '0.9rem',
+              }}
+            />
+          </div>
 
-        <div>
-          <label
-            style={{
-              display: 'block',
-              fontSize: '0.85rem',
-              marginBottom: 4,
-            }}
-          >
-            Bus / interieur
-          </label>
-          <input
-            name="address_int_number"
-            value={form.address_int_number}
-            onChange={handleChange}
-            style={{
-              width: '100%',
-              padding: '0.4rem 0.5rem',
-              borderRadius: 4,
-              border: '1px solid #d1d5db',
-              fontSize: '0.9rem',
-            }}
-          />
-        </div>
+          <div>
+            <label
+              style={{
+                display: 'block',
+                fontSize: '0.85rem',
+                marginBottom: '0.25rem',
+              }}
+            >
+              Wijk / Colonia
+            </label>
+            <input
+              type="text"
+              name="address_neighborhood"
+              value={form.address_neighborhood}
+              onChange={handleChange}
+              style={{
+                width: '100%',
+                padding: '0.4rem 0.5rem',
+                borderRadius: 4,
+                border: '1px solid #d1d5db',
+                fontSize: '0.9rem',
+              }}
+            />
+          </div>
 
-        <div>
-          <label
-            style={{
-              display: 'block',
-              fontSize: '0.85rem',
-              marginBottom: 4,
-            }}
-          >
-            Wijk
-          </label>
-          <input
-            name="address_neighborhood"
-            value={form.address_neighborhood}
-            onChange={handleChange}
-            style={{
-              width: '100%',
-              padding: '0.4rem 0.5rem',
-              borderRadius: 4,
-              border: '1px solid #d1d5db',
-              fontSize: '0.9rem',
-            }}
-          />
-        </div>
+          <div>
+            <label
+              style={{
+                display: 'block',
+                fontSize: '0.85rem',
+                marginBottom: '0.25rem',
+              }}
+            >
+              Stad
+            </label>
+            <input
+              type="text"
+              name="address_city"
+              value={form.address_city}
+              onChange={handleChange}
+              style={{
+                width: '100%',
+                padding: '0.4rem 0.5rem',
+                borderRadius: 4,
+                border: '1px solid #d1d5db',
+                fontSize: '0.9rem',
+              }}
+            />
+          </div>
 
-        <div>
-          <label
-            style={{
-              display: 'block',
-              fontSize: '0.85rem',
-              marginBottom: 4,
-            }}
-          >
-            Postcode
-          </label>
-          <input
-            name="address_postal_code"
-            value={form.address_postal_code}
-            onChange={handleChange}
-            style={{
-              width: '100%',
-              padding: '0.4rem 0.5rem',
-              borderRadius: 4,
-              border: '1px solid #d1d5db',
-              fontSize: '0.9rem',
-            }}
-          />
-        </div>
+          <div>
+            <label
+              style={{
+                display: 'block',
+                fontSize: '0.85rem',
+                marginBottom: '0.25rem',
+              }}
+            >
+              Staat
+            </label>
+            <input
+              type="text"
+              name="address_state"
+              value={form.address_state}
+              onChange={handleChange}
+              style={{
+                width: '100%',
+                padding: '0.4rem 0.5rem',
+                borderRadius: 4,
+                border: '1px solid #d1d5db',
+                fontSize: '0.9rem',
+              }}
+            />
+          </div>
 
-        <div>
-          <label
-            style={{
-              display: 'block',
-              fontSize: '0.85rem',
-              marginBottom: 4,
-            }}
-          >
-            Stad
-          </label>
-          <input
-            name="address_city"
-            value={form.address_city}
-            onChange={handleChange}
-            style={{
-              width: '100%',
-              padding: '0.4rem 0.5rem',
-              borderRadius: 4,
-              border: '1px solid #d1d5db',
-              fontSize: '0.9rem',
-            }}
-          />
-        </div>
+          <div>
+            <label
+              style={{
+                display: 'block',
+                fontSize: '0.85rem',
+                marginBottom: '0.25rem',
+              }}
+            >
+              Postcode
+            </label>
+            <input
+              type="text"
+              name="address_postal_code"
+              value={form.address_postal_code}
+              onChange={handleChange}
+              style={{
+                width: '100%',
+                padding: '0.4rem 0.5rem',
+                borderRadius: 4,
+                border: '1px solid #d1d5db',
+                fontSize: '0.9rem',
+              }}
+            />
+          </div>
 
-        <div>
-          <label
-            style={{
-              display: 'block',
-              fontSize: '0.85rem',
-              marginBottom: 4,
-            }}
-          >
-            Staat
-          </label>
-          <input
-            name="address_state"
-            value={form.address_state}
-            onChange={handleChange}
-            style={{
-              width: '100%',
-              padding: '0.4rem 0.5rem',
-              borderRadius: 4,
-              border: '1px solid #d1d5db',
-              fontSize: '0.9rem',
-            }}
-          />
-        </div>
-
-        <div>
-          <label
-            style={{
-              display: 'block',
-              fontSize: '0.85rem',
-              marginBottom: 4,
-            }}
-          >
-            Land
-          </label>
-          <input
-            name="address_country"
-            value={form.address_country}
-            onChange={handleChange}
-            style={{
-              width: '100%',
-              padding: '0.4rem 0.5rem',
-              borderRadius: 4,
-              border: '1px solid #d1d5db',
-              fontSize: '0.9rem',
-            }}
-          />
+          <div>
+            <label
+              style={{
+                display: 'block',
+                fontSize: '0.85rem',
+                marginBottom: '0.25rem',
+              }}
+            >
+              Land
+            </label>
+            <input
+              type="text"
+              name="address_country"
+              value={form.address_country}
+              onChange={handleChange}
+              style={{
+                width: '100%',
+                padding: '0.4rem 0.5rem',
+                borderRadius: 4,
+                border: '1px solid #d1d5db',
+                fontSize: '0.9rem',
+              }}
+            />
+          </div>
         </div>
 
         <div
           style={{
-            gridColumn: '1 / -1',
-            marginTop: '0.5rem',
+            marginTop: '0.75rem',
             display: 'flex',
             justifyContent: 'flex-end',
             gap: '0.5rem',
@@ -1754,15 +2125,14 @@ const CustomerEditPage: React.FC = () => {
         >
           <button
             type="button"
-            onClick={() => navigate('/customers')}
-            disabled={saving}
+            onClick={() => navigate(`/customers/${id}`)}
             style={{
               padding: '0.4rem 0.75rem',
               borderRadius: 4,
               border: '1px solid #d1d5db',
               backgroundColor: '#f9fafb',
               fontSize: '0.9rem',
-              cursor: saving ? 'default' : 'pointer',
+              cursor: 'pointer',
             }}
           >
             Annuleren
