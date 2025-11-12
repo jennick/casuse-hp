@@ -3,12 +3,10 @@ from typing import Optional, List
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, validator
-
 from models import CustomerType
 
 
 # === Auth / Token ===
-
 
 class Token(BaseModel):
     access_token: str
@@ -22,7 +20,6 @@ class TokenData(BaseModel):
 
 
 # === Public registration ===
-
 
 class RegistrationRequest(BaseModel):
     email: EmailStr
@@ -67,7 +64,6 @@ class RegistrationResponse(BaseModel):
 
 # === Password setup ===
 
-
 class PasswordSetupTokenInfo(BaseModel):
     status: str
     email: EmailStr
@@ -85,14 +81,12 @@ class PasswordSetupResponse(BaseModel):
 
 # === Public login ===
 
-
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
 
 
 # === Admin / customers ===
-
 
 class CustomerBase(BaseModel):
     email: EmailStr
@@ -123,7 +117,6 @@ class CustomerCreate(CustomerBase):
 class CustomerUpdate(BaseModel):
     # voor update zijn alle velden optioneel (partial update)
     email: Optional[EmailStr] = None
-
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     phone_number: Optional[str] = None
@@ -160,6 +153,11 @@ class CustomerListItem(BaseModel):
     address_city: Optional[str] = None
     address_state: Optional[str] = None
 
+    # ───── NIEUW: loginstatus en deactivatie ─────
+    has_login: bool
+    portal_status: Optional[str] = None
+    deactivated_at: Optional[datetime] = None
+
     class Config:
         orm_mode = True
 
@@ -171,9 +169,13 @@ class CustomerDetail(CustomerBase):
     created_at: datetime
     updated_at: datetime
 
-    # nieuw:
+    # extra metadata
     deactivated_at: Optional[datetime] = None
     hashed_password: Optional[str] = None
+
+    # ───── NIEUW: loginstatus ─────
+    has_login: bool
+    portal_status: Optional[str] = None
 
     class Config:
         orm_mode = True
